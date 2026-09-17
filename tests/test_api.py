@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 from pathlib import Path
 
 import pytest
@@ -129,6 +130,28 @@ def test_upload_validates_and_indexes_audio(
     assert (app_settings.library_root / "New Tone.m4a").is_file()
 
 
+def test_filename_quality_is_not_classified_by_local_heuristics(
+    client: TestClient,
+    mutation_headers: dict[str, str],
+    app_settings: Settings,
+) -> None:
+    make_audio(app_settings.library_root / "Artist - Official Audio [abcdefghijk].mp3")
+    response = client.post("/api/scan", headers=mutation_headers)
+    assert response.status_code == 200
+    tracks = client.get("/api/tracks").json()["items"]
+    added = next(track for track in tracks if track["filename"].startswith("Artist - Official"))
+    assert "noisy_filename" not in added["issues"]
+
+    with client.app.state.database.transaction() as connection:
+        connection.execute(
+            "UPDATE tracks SET issues_json=? WHERE id=?",
+            ('["missing_artwork", "noisy_filename"]', added["id"]),
+        )
+    client.post("/api/scan", headers=mutation_headers)
+    refreshed = client.get(f"/api/tracks/{added['id']}").json()
+    assert refreshed["issues"] == ["missing_artwork"]
+
+
 def test_upload_rejects_fake_audio(
     client: TestClient, mutation_headers: dict[str, str], app_settings: Settings
 ) -> None:
@@ -173,3 +196,98 @@ def test_rejects_runtime_data_inside_library(tmp_path: Path) -> None:
     )
     with pytest.raises(ValueError, match="must not overlap"):
         settings.prepare()
+
+
+def settings_payload(app_settings: Settings) -> dict:
+    return {
+        "library_root": str(app_settings.library_root),
+        "port": 8764,
+        "max_upload_mb": 250,
+        "backup_retention_days": 30,
+        "naming_template": "{artist} - {title}",
+        "ai": {
+            "base_url": "https://ai.example.com/v1",
+            "model": "metadata-model",
+            "api_key": None,
+            "clear_api_key": False,
+        },
+        "metube": {
+            "url": "https://metube.example.com",
+            "format": "m4a",
+            "quality": "256",
+            "cf_client_id": None,
+            "cf_client_secret": None,
+            "api_key": None,
+            "clear_cf_client_id": False,
+            "clear_cf_client_secret": False,
+            "clear_api_key": False,
+        },
+    }
+
+
+def test_settings_encrypt_secrets_and_never_return_them(
+    client: TestClient,
+    mutation_headers: dict[str, str],
+    app_settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = settings_payload(app_settings)
+    payload["ai"]["api_key"] = "private-ai-key"
+    payload["metube"]["cf_client_secret"] = "private-cf-secret"
+
+    response = client.put("/api/settings", headers=mutation_headers, json=payload)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["ai"]["api_key_set"] is True
+    assert "private" not in response.text
+    saved = app_settings.settings_path.read_text(encoding="utf-8")
+    assert "private-ai-key" not in saved
+    assert "private-cf-secret" not in saved
+    assert json.loads(saved)["ai"]["api_key"]
+    monkeypatch.setenv("LINER_DATA_DIR", str(app_settings.data_dir))
+    reloaded = Settings.from_env()
+    assert reloaded.ai_api_key == "private-ai-key"
+    assert reloaded.metube_cf_client_secret == "private-cf-secret"
+
+
+def test_settings_port_change_requires_restart_and_validates_inputs(
+    client: TestClient, mutation_headers: dict[str, str], app_settings: Settings
+) -> None:
+    payload = settings_payload(app_settings)
+    payload["port"] = 9876
+    response = client.put("/api/settings", headers=mutation_headers, json=payload)
+    assert response.status_code == 200, response.text
+    assert response.json()["active_port"] == 8764
+    assert response.json()["port"] == 9876
+    assert response.json()["restart_required"] is True
+
+    payload["ai"]["base_url"] = "https://user:password@ai.example.com"
+    assert (
+        client.put("/api/settings", headers=mutation_headers, json=payload).status_code == 422
+    )
+    payload["ai"]["base_url"] = ""
+    payload["naming_template"] = "{unsupported}"
+    assert (
+        client.put("/api/settings", headers=mutation_headers, json=payload).status_code == 422
+    )
+
+
+def test_settings_can_switch_library_without_modifying_source_audio(
+    client: TestClient,
+    mutation_headers: dict[str, str],
+    app_settings: Settings,
+    tmp_path: Path,
+) -> None:
+    old_file = app_settings.library_root / "Liner Tests - Synthetic Tone.mp3"
+    new_library = tmp_path / "second-library"
+    new_library.mkdir()
+    make_audio(new_library / "Second Track.mp3")
+    payload = settings_payload(app_settings)
+    payload["library_root"] = str(new_library)
+
+    response = client.put("/api/settings", headers=mutation_headers, json=payload)
+
+    assert response.status_code == 200, response.text
+    assert old_file.is_file()
+    tracks = client.get("/api/tracks").json()["items"]
+    assert [track["filename"] for track in tracks] == ["Second Track.mp3"]

@@ -35,8 +35,31 @@ export type Bootstrap = {
   version: string;
   csrf_token: string;
   library_name: string;
+  naming_template: string;
   stats: Stats;
   capabilities: { ai: boolean; metube: boolean };
+};
+
+export type AppSettings = {
+  library_root: string;
+  port: number;
+  active_port: number;
+  max_upload_mb: number;
+  backup_retention_days: number;
+  naming_template: string;
+  ai: {
+    base_url: string;
+    model: string;
+    api_key_set: boolean;
+  };
+  metube: {
+    url: string;
+    format: "mp3" | "m4a" | "opus";
+    quality: "best" | "320" | "256" | "192" | "128";
+    cf_client_id_set: boolean;
+    cf_client_secret_set: boolean;
+    api_key_set: boolean;
+  };
 };
 
 export type HistoryItem = {

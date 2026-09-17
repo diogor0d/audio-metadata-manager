@@ -4,7 +4,7 @@ import json
 import os
 import shutil
 import threading
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, BinaryIO
 from uuid import uuid4
@@ -45,7 +45,8 @@ class LibraryService:
         existing = {
             row["relative_path"]: row
             for row in self.database.fetch_all(
-                "SELECT id, relative_path, size, mtime_ns FROM tracks WHERE status = 'active'"
+                "SELECT id, relative_path, size, mtime_ns, issues_json "
+                "FROM tracks WHERE status = 'active'"
             )
         }
         for path in root.rglob("*"):
@@ -61,6 +62,14 @@ class LibraryService:
             stat = path.stat()
             old = existing.get(relative)
             if old and old["size"] == stat.st_size and old["mtime_ns"] == stat.st_mtime_ns:
+                issues = json.loads(old["issues_json"])
+                if "noisy_filename" in issues:
+                    issues.remove("noisy_filename")
+                    with self.database.transaction() as connection:
+                        connection.execute(
+                            "UPDATE tracks SET issues_json=? WHERE id=?",
+                            (json.dumps(issues), old["id"]),
+                        )
                 indexed += 1
                 continue
             try:
@@ -107,6 +116,41 @@ class LibraryService:
                     [(relative,) for relative in missing],
                 )
         return {"indexed": indexed, "failed": failed, "missing_removed": len(missing)}
+
+    def reset_index(self) -> None:
+        with self._mutation_lock, self.database.transaction() as connection:
+            connection.execute("DELETE FROM downloads")
+            connection.execute("DELETE FROM plans")
+            connection.execute("DELETE FROM operations")
+            connection.execute("DELETE FROM tracks")
+        for backup in self.settings.backup_dir.iterdir():
+            if backup.is_file() and not backup.is_symlink():
+                backup.unlink()
+
+    def cleanup_backups(self) -> int:
+        cutoff = datetime.now(UTC) - timedelta(days=self.settings.backup_retention_days)
+        expired = []
+        for operation in self.database.fetch_all(
+            "SELECT id, backup_path, created_at FROM operations "
+            "WHERE status = 'applied' AND backup_path IS NOT NULL"
+        ):
+            try:
+                created = datetime.fromisoformat(operation["created_at"])
+            except (TypeError, ValueError):
+                continue
+            if created >= cutoff:
+                continue
+            backup = Path(operation["backup_path"])
+            if backup.resolve().is_relative_to(self.settings.backup_dir.resolve()):
+                backup.unlink(missing_ok=True)
+            expired.append((operation["id"],))
+        if expired:
+            with self.database.transaction() as connection:
+                connection.executemany(
+                    "UPDATE operations SET status='expired', backup_path=NULL WHERE id=?",
+                    expired,
+                )
+        return len(expired)
 
     def list_tracks(
         self,

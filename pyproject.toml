@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "liner-local"
-version = "1.0.0"
+version = "1.1.0"
 description = "A local-first workbench for repairing Spotify local-file metadata"
 readme = "README.md"
 requires-python = ">=3.12"

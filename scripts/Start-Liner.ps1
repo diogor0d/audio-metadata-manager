@@ -5,18 +5,26 @@ param(
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $Executable = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
-$EnvironmentFile = Join-Path $ProjectRoot ".env"
 $Port = 8764
-if ($env:LINER_PORT) {
-    $Port = [int]$env:LINER_PORT
-} elseif (Test-Path -LiteralPath $EnvironmentFile) {
-    $PortLine = Get-Content -LiteralPath $EnvironmentFile | Where-Object { $_ -match '^\s*LINER_PORT\s*=\s*\d+\s*$' } | Select-Object -Last 1
-    if ($PortLine -and $PortLine -match '=\s*(\d+)\s*$') {
-        $Port = [int]$Matches[1]
+if ($env:LINER_DATA_DIR) {
+    $DataDirectory = [Environment]::ExpandEnvironmentVariables($env:LINER_DATA_DIR)
+} else {
+    $DataDirectory = Join-Path ([Environment]::GetFolderPath("LocalApplicationData")) "Liner"
+}
+$SettingsFile = Join-Path $DataDirectory "settings.json"
+if (Test-Path -LiteralPath $SettingsFile) {
+    try {
+        $SavedSettings = Get-Content -LiteralPath $SettingsFile -Raw | ConvertFrom-Json
+        if ($SavedSettings.port -ge 1024 -and $SavedSettings.port -le 65535) {
+            $Port = [int]$SavedSettings.port
+        }
+    } catch {
+        throw "Liner settings are unreadable. Correct or remove $SettingsFile."
     }
+} elseif ($env:LINER_PORT) {
+    $Port = [int]$env:LINER_PORT
 }
 $Url = "http://127.0.0.1:$Port"
-$DataDirectory = Join-Path ([Environment]::GetFolderPath("LocalApplicationData")) "Liner"
 $PidFile = Join-Path $DataDirectory "liner.pid"
 
 if (-not (Test-Path -LiteralPath $Executable)) {
@@ -30,7 +38,7 @@ if ($Listening) {
     } catch {
         throw "Port $Port is occupied by another application."
     }
-    if ($ExistingHealth.status -ne "ok" -or $ExistingHealth.version -ne "1.0.0") {
+    if ($ExistingHealth.status -ne "ok" -or $ExistingHealth.version -ne "1.1.0") {
         throw "Port $Port is occupied by another application."
     }
     New-Item -ItemType Directory -Path $DataDirectory -Force | Out-Null

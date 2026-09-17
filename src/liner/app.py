@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import mimetypes
+import string
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
@@ -43,6 +45,74 @@ class DownloadRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     url: str = Field(min_length=8, max_length=4096)
+
+
+class AISettingsUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    base_url: str = Field(default="", max_length=2048)
+    model: str = Field(default="", max_length=200)
+    api_key: str | None = Field(default=None, max_length=4096)
+    clear_api_key: bool = False
+
+
+class MeTubeSettingsUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    url: str = Field(default="", max_length=2048)
+    format: str = Field(default="mp3", pattern="^(mp3|m4a|opus)$")
+    quality: str = Field(default="best", pattern="^(best|320|256|192|128)$")
+    cf_client_id: str | None = Field(default=None, max_length=4096)
+    cf_client_secret: str | None = Field(default=None, max_length=4096)
+    api_key: str | None = Field(default=None, max_length=4096)
+    clear_cf_client_id: bool = False
+    clear_cf_client_secret: bool = False
+    clear_api_key: bool = False
+
+
+class SettingsUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    library_root: str = Field(min_length=1, max_length=1024)
+    port: int = Field(ge=1024, le=65535)
+    max_upload_mb: int = Field(ge=1, le=4096)
+    backup_retention_days: int = Field(ge=1, le=3650)
+    naming_template: str = Field(min_length=1, max_length=160)
+    ai: AISettingsUpdate
+    metube: MeTubeSettingsUpdate
+
+
+def _integration_url(value: str, name: str) -> str | None:
+    value = value.strip().rstrip("/")
+    if not value:
+        return None
+    parsed = urlparse(value)
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise HTTPException(status_code=422, detail=f"{name} must be an HTTP(S) origin")
+    return value
+
+
+def _validate_template(value: str) -> str:
+    allowed = {"artist", "title", "album", "albumartist", "date", "year", "genre", "track"}
+    try:
+        fields = {field for _, field, _, _ in string.Formatter().parse(value) if field}
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422, detail="Naming template has invalid braces"
+        ) from exc
+    if not fields or not fields.issubset(allowed):
+        raise HTTPException(
+            status_code=422,
+            detail="Naming template must use supported metadata fields",
+        )
+    return value.strip()
 
 
 class LocalBoundaryMiddleware(BaseHTTPMiddleware):
@@ -91,10 +161,12 @@ def create_app(settings: Settings | None = None, *, allow_test_host: bool = Fals
     library = LibraryService(active_settings, database)
     ai = AIService(active_settings, database, library)
     metube = MeTubeService(active_settings, database, library)
+    active_port = active_settings.port
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         library.scan()
+        library.cleanup_backups()
         yield
 
     application = FastAPI(
@@ -134,11 +206,78 @@ def create_app(settings: Settings | None = None, *, allow_test_host: bool = Fals
             "version": __version__,
             "csrf_token": active_settings.csrf_token,
             "library_name": active_settings.library_root.name,
+            "naming_template": active_settings.naming_template,
             "stats": library.stats(),
             "capabilities": {
                 "ai": active_settings.ai_enabled,
                 "metube": active_settings.metube_enabled,
             },
+        }
+
+    @application.get("/api/settings")
+    async def get_settings() -> dict[str, Any]:
+        return active_settings.public(active_port=active_port)
+
+    @application.put("/api/settings")
+    async def update_settings(body: SettingsUpdate) -> dict[str, Any]:
+        library_root = Path(body.library_root).expanduser()
+        if not library_root.is_dir():
+            raise HTTPException(status_code=422, detail="Library folder does not exist")
+        try:
+            active_settings.validate_paths(library_root)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        ai_url = _integration_url(body.ai.base_url, "AI endpoint")
+        metube_url = _integration_url(body.metube.url, "MeTube endpoint")
+        naming_template = _validate_template(body.naming_template)
+        changed_library = library_root.resolve() != active_settings.library_root.resolve()
+        if changed_library and library.stats()["quarantined"]:
+            raise HTTPException(
+                status_code=409,
+                detail="Restore or delete quarantined files before changing libraries",
+            )
+
+        previous = active_settings.__dict__.copy()
+        active_settings.library_root = library_root.resolve()
+        active_settings.port = body.port
+        active_settings.max_upload_bytes = body.max_upload_mb * 1024 * 1024
+        active_settings.backup_retention_days = body.backup_retention_days
+        active_settings.naming_template = naming_template
+        active_settings.ai_base_url = ai_url
+        active_settings.ai_model = body.ai.model.strip() or None
+        if body.ai.clear_api_key:
+            active_settings.ai_api_key = None
+        elif body.ai.api_key is not None and body.ai.api_key.strip():
+            active_settings.ai_api_key = body.ai.api_key.strip()
+        active_settings.metube_url = metube_url
+        active_settings.metube_format = body.metube.format
+        active_settings.metube_quality = body.metube.quality
+        for attribute, value, clear in (
+            ("metube_cf_client_id", body.metube.cf_client_id, body.metube.clear_cf_client_id),
+            (
+                "metube_cf_client_secret",
+                body.metube.cf_client_secret,
+                body.metube.clear_cf_client_secret,
+            ),
+            ("metube_api_key", body.metube.api_key, body.metube.clear_api_key),
+        ):
+            if clear:
+                setattr(active_settings, attribute, None)
+            elif value is not None and value.strip():
+                setattr(active_settings, attribute, value.strip())
+        try:
+            active_settings.persist()
+        except (OSError, RuntimeError) as exc:
+            active_settings.__dict__.update(previous)
+            raise HTTPException(status_code=500, detail="Settings could not be saved") from exc
+        if changed_library:
+            library.reset_index()
+            library.scan()
+        library.cleanup_backups()
+        return {
+            **active_settings.public(active_port=active_port),
+            "restart_required": body.port != active_port,
+            "stats": library.stats(),
         }
 
     @application.post("/api/scan")

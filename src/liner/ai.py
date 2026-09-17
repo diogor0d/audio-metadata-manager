@@ -60,9 +60,11 @@ class AIService:
             "naming_template, and actions. Each action must be update_metadata with a provided track_id, "
             "a short reason, tags, and optional filename. Allowed tag keys are: "
             f"{', '.join(TAG_FIELDS)}. Preserve meaningful version labels. Do not invent release facts; "
-            "state uncertainty in answer and omit unsupported fields. Never propose commands, paths, URLs, "
-            "downloads, deletion, or quarantine. A naming template may use only {artist}, {title}, {album}, "
-            "{albumartist}, {date}, {year}, {genre}, and {track}."
+            "state uncertainty in answer and omit unsupported fields. Assess filename quality semantically: "
+            "remove bracketed source IDs, download labels, and similar junk only when clearly extraneous, "
+            "while preserving meaningful release, mix, edit, and version text. Never propose commands, paths, "
+            "URLs, downloads, deletion, or quarantine. A naming template may use only {artist}, {title}, "
+            "{album}, {albumartist}, {date}, {year}, {genre}, and {track}."
         )
         payload = {
             "model": self.settings.ai_model,

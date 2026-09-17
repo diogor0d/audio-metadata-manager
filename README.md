@@ -21,7 +21,7 @@ AI planning, and optional MeTube-sidecar ingestion.
 - AI can return schema-validated correction plans only. It cannot run commands,
   browse the filesystem, download files, or apply a plan without user confirmation.
 - Runtime data and credentials live outside Git under the current user's application
-  data directory or local environment.
+  data directory. Credentials are encrypted for the current Windows account with DPAPI.
 
 Liner does not modify a track during scanning. Spotify may treat changes to artist,
 album, title, or duration as a new local-track identity, so edits can invalidate
@@ -65,20 +65,14 @@ also be permanently removed.
 
 ## Configuration
 
-Liner defaults to `%USERPROFILE%\Music\Local Files`. Copy `.env.example` to `.env`
-only when an override or optional integration is needed. `.env` is ignored by Git.
+Liner defaults to `%USERPROFILE%\Music\Local Files`. Use the browser's Settings desk
+to configure the library folder, filename pattern, upload limit, backup retention,
+loopback port, AI provider, and MeTube sidecar. A port change requires restarting Liner;
+other settings take effect immediately. Settings are stored in
+`%LOCALAPPDATA%\Liner\settings.json`, with credentials protected by Windows DPAPI and
+never returned to the browser.
 
-| Variable | Purpose |
-| --- | --- |
-| `LINER_LIBRARY_ROOT` | Override the local audio source folder |
-| `LINER_PORT` | Override loopback port `8764` |
-| `LINER_AI_BASE_URL` | OpenAI-compatible API base URL |
-| `LINER_AI_MODEL` | Model identifier |
-| `LINER_AI_API_KEY` | Local AI credential |
-| `LINER_METUBE_SIDECAR_URL` | Fixed MeTube-sidecar origin |
-| `LINER_METUBE_CF_CLIENT_ID` | Optional Cloudflare service-token ID |
-| `LINER_METUBE_CF_CLIENT_SECRET` | Optional Cloudflare service-token secret |
-| `LINER_METUBE_API_KEY` | Optional sidecar defense-in-depth key |
+`LINER_DATA_DIR` remains available as a bootstrap override for development or recovery.
 
 AI requests transmit the selected tracks' filenames, tags, format, duration, and
 issue labels to the configured provider. Audio and artwork are never sent.
@@ -113,6 +107,7 @@ Runtime state is stored under `%LOCALAPPDATA%\Liner`:
 | Directory | Content |
 | --- | --- |
 | `liner.sqlite3` | Index, plans, operations, and download jobs |
+| `settings.json` | Browser-managed settings and DPAPI-protected credentials |
 | `backups` | Pre-edit originals used by Undo |
 | `quarantine` | Files removed from the active Spotify source |
 | `staging` | Temporary, bounded uploads |

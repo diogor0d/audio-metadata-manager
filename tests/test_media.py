@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
-from liner.media import MediaError, render_template, sanitize_filename
+from liner.media import MediaError, filename_suggestion, render_template, sanitize_filename
 
 
 def test_filename_sanitization_handles_windows_names() -> None:
@@ -20,3 +22,11 @@ def test_naming_template_is_declarative() -> None:
     assert rendered == "Artist - Title.mp3"
     with pytest.raises(MediaError):
         render_template("{__import__('os')}", {}, ".mp3")
+
+
+def test_filename_suggestion_does_not_guess_which_text_is_junk() -> None:
+    suggestion = filename_suggestion(
+        Path("Don Toliver - I Don't Rock Adidas (unreleased) [mkVjOk8AJuc].mp3")
+    )
+    assert suggestion["artist"] == "Don Toliver"
+    assert suggestion["title"].endswith("[mkVjOk8AJuc]")

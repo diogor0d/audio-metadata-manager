@@ -22,13 +22,6 @@ RESERVED_NAMES = {
     *(f"COM{i}" for i in range(1, 10)),
     *(f"LPT{i}" for i in range(1, 10)),
 }
-NOISE_PATTERNS = (
-    re.compile(r"\[[A-Za-z0-9_-]{11}\]"),
-    re.compile(
-        r"\b(?:official\s+(?:audio|video)|highest\s+quality|visuali[sz]er)\b", re.IGNORECASE
-    ),
-    re.compile(r"\s{2,}"),
-)
 TEMPLATE_TOKEN = re.compile(r"\{(artist|title|album|albumartist|date|year|genre|track)\}")
 
 
@@ -137,8 +130,6 @@ def inspect_media(path: Path) -> dict[str, Any]:
         issues.append("missing_title")
     if not has_artwork:
         issues.append("missing_artwork")
-    if any(pattern.search(path.stem) for pattern in NOISE_PATTERNS):
-        issues.append("noisy_filename")
     return {
         "size": path.stat().st_size,
         "mtime_ns": path.stat().st_mtime_ns,
@@ -153,7 +144,6 @@ def inspect_media(path: Path) -> dict[str, Any]:
 
 def filename_suggestion(path: Path) -> dict[str, str]:
     stem = path.stem
-    stem = re.sub(r"\s*\[[A-Za-z0-9_-]{11}\]\s*$", "", stem)
     stem = re.sub(r"\s+", " ", stem).strip()
     parts = re.split(r"\s+[\-–—]\s+", stem, maxsplit=1)
     if len(parts) == 2:

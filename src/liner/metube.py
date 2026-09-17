@@ -54,9 +54,9 @@ class MeTubeService:
                 json={
                     "url": source_url,
                     "download_type": "audio",
-                    "format": "mp3",
-                    "codec": "mp3",
-                    "quality": "best",
+                    "format": self.settings.metube_format,
+                    "codec": self.settings.metube_format,
+                    "quality": self.settings.metube_quality,
                 },
             )
             response.raise_for_status()
