@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "liner-local"
+version = "1.0.0"
+description = "A local-first workbench for repairing Spotify local-file metadata"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+dependencies = [
+  "fastapi>=0.116,<1",
+  "httpx>=0.28,<1",
+  "mutagen>=1.47,<2",
+  "pillow>=11.3,<13",
+  "platformdirs>=4.3,<5",
+  "python-dotenv>=1.1,<2",
+  "python-multipart>=0.0.20,<1",
+  "uvicorn[standard]>=0.35,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8,<9",
+  "pytest-asyncio>=0.24,<1",
+  "ruff>=0.12,<1",
+]
+
+[project.scripts]
+liner = "liner.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+liner = ["static/**/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 96
+target-version = "py312"

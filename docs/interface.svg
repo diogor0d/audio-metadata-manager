@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 640" role="img" aria-labelledby="title desc">
+  <title id="title">Liner interface diagram</title>
+  <desc id="desc">A local audio repair interface with navigation, a cue-sheet track list, and a correction panel.</desc>
+  <rect width="1200" height="640" fill="#e7eef1"/>
+  <rect width="220" height="640" fill="#d8e3e7"/>
+  <circle cx="45" cy="47" r="18" fill="#17282f"/>
+  <text x="75" y="56" fill="#17282f" font-family="sans-serif" font-size="28" font-weight="700" letter-spacing="5">LINER</text>
+  <g fill="#466f7d" font-family="monospace" font-size="12"><text x="28" y="130">SOURCE</text><text x="28" y="155" fill="#17282f">Local Files</text></g>
+  <rect x="20" y="195" width="180" height="42" rx="6" fill="#17282f"/><text x="56" y="222" fill="#f8faf9" font-family="sans-serif" font-size="15">Library</text>
+  <g fill="#68797f" font-family="sans-serif" font-size="15"><text x="56" y="275">Add files</text><text x="56" y="321">Assistant</text><text x="56" y="367">History</text><text x="56" y="413">Quarantine</text></g>
+  <text x="265" y="58" fill="#466f7d" font-family="monospace" font-size="11" letter-spacing="2">REPAIR QUEUE</text>
+  <text x="265" y="115" fill="#17282f" font-family="sans-serif" font-size="48" font-weight="800">Your local cuts,</text>
+  <text x="265" y="162" fill="#c94732" font-family="sans-serif" font-size="48" font-weight="700">made legible.</text>
+  <rect x="265" y="195" width="500" height="60" fill="#f8faf9" stroke="#cad5d9"/>
+  <g font-family="sans-serif"><text x="286" y="220" fill="#17282f" font-size="22" font-weight="700">83</text><text x="286" y="240" fill="#68797f" font-size="11">need attention</text><text x="440" y="220" fill="#17282f" font-size="22" font-weight="700">34</text><text x="440" y="240" fill="#68797f" font-size="11">ready</text></g>
+  <g font-family="sans-serif" fill="#17282f"><rect x="265" y="285" width="500" height="64" fill="#f8faf9"/><text x="292" y="311" font-size="15" font-weight="700">Glass Meridian (Studio Version)</text><text x="292" y="332" fill="#68797f" font-size="12">Mira Vale</text><rect x="650" y="304" width="75" height="20" fill="#f7dfda"/><text x="658" y="318" fill="#8e3022" font-family="monospace" font-size="9">2 ISSUES</text></g>
+  <g font-family="sans-serif" fill="#17282f"><line x1="265" y1="365" x2="765" y2="365" stroke="#cad5d9"/><text x="292" y="397" font-size="15" font-weight="700">Night Transit</text><text x="292" y="418" fill="#68797f" font-size="12">Mira Vale</text></g>
+  <rect x="800" y="24" width="376" height="592" fill="#f8faf9" stroke="#cad5d9"/>
+  <text x="828" y="60" fill="#466f7d" font-family="monospace" font-size="11" letter-spacing="2">TRACK BENCH</text>
+  <rect x="828" y="88" width="95" height="95" fill="#d8e3e7"/><circle cx="875" cy="135" r="28" fill="none" stroke="#466f7d" stroke-width="2"/>
+  <text x="945" y="120" fill="#17282f" font-family="sans-serif" font-size="21" font-weight="700">Glass Meridian</text><text x="945" y="147" fill="#466f7d" font-family="sans-serif" font-size="14">Mira Vale</text>
+  <rect x="828" y="218" width="320" height="105" fill="#17282f"/>
+  <text x="845" y="240" fill="#afbdc2" font-family="monospace" font-size="9">CURRENT FILE</text><text x="845" y="264" fill="#f8faf9" font-family="monospace" font-size="10" text-decoration="line-through" text-decoration-color="#c94732">final_track_v3.mp3</text>
+  <rect x="845" y="279" width="286" height="28" fill="#f4c3ba"/><text x="853" y="297" fill="#17282f" font-family="monospace" font-size="10">Mira Vale - Glass Meridian (Studio Version).mp3</text>
+  <g fill="#68797f" font-family="monospace" font-size="9"><text x="828" y="365">TITLE</text><text x="828" y="422">ARTIST</text><text x="828" y="479">ALBUM</text></g>
+  <g stroke="#cad5d9"><line x1="828" y1="397" x2="1148" y2="397"/><line x1="828" y1="454" x2="1148" y2="454"/><line x1="828" y1="511" x2="1148" y2="511"/></g>
+  <rect x="982" y="552" width="166" height="42" rx="5" fill="#17282f"/><text x="1014" y="579" fill="#f8faf9" font-family="sans-serif" font-size="14" font-weight="700">Save correction</text>
+</svg>
