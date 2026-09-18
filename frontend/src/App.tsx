@@ -9,6 +9,7 @@ import {
   FileAudio,
   FolderInput,
   History,
+  Images,
   Library,
   LoaderCircle,
   Music2,
@@ -22,7 +23,7 @@ import {
   X,
 } from "lucide-react";
 import { api, formatBytes, formatDuration, setRequestToken } from "./api";
-import type { AIPlan, AppSettings, Bootstrap, HistoryItem, Stats, Tags, Track } from "./types";
+import type { AIPlan, AppSettings, ArtworkCandidate, Bootstrap, HistoryItem, Stats, Tags, Track } from "./types";
 
 type View = "library" | "add" | "assistant" | "history" | "quarantine" | "settings";
 
@@ -272,8 +273,12 @@ function TrackEditor({ track, namingTemplate, onClose, onUpdated, onError }: { t
   const [tags, setTags] = useState<Tags>(track.tags);
   const [filename, setFilename] = useState(track.filename);
   const [saving, setSaving] = useState(false);
+  const [artworkBusy, setArtworkBusy] = useState(false);
+  const [artworkCandidates, setArtworkCandidates] = useState<ArtworkCandidate[]>([]);
+  const activeTrackId = useRef(track.id);
+  activeTrackId.current = track.id;
 
-  useEffect(() => { setTags(track.tags); setFilename(track.filename); }, [track.id, track.filename, track.tags]);
+  useEffect(() => { setTags(track.tags); setFilename(track.filename); setArtworkCandidates([]); setArtworkBusy(false); }, [track.id, track.filename, track.tags]);
   const dirty = JSON.stringify(tags) !== JSON.stringify(track.tags) || filename !== track.filename;
 
   const save = async () => {
@@ -292,6 +297,31 @@ function TrackEditor({ track, namingTemplate, onClose, onUpdated, onError }: { t
     const form = new FormData(); form.append("artwork", file);
     try { const updated = await api<Track>(`/api/tracks/${track.id}/artwork`, { method: "POST", body: form }); await onUpdated(updated, "Artwork embedded and backed up"); } catch (reason) { onError(reason); }
   };
+  const discoverArtwork = async () => {
+    const requestedTrackId = track.id;
+    setArtworkBusy(true);
+    try {
+      const result = await api<{ items: ArtworkCandidate[]; applied?: boolean; track?: Track }>(`/api/tracks/${track.id}/artwork/discover`, { method: "POST" });
+      if (activeTrackId.current !== requestedTrackId) return;
+      if (result.applied && result.track) {
+        setArtworkCandidates([]);
+        await onUpdated(result.track, "Exact MusicBrainz artwork embedded and backed up");
+      } else {
+        setArtworkCandidates(result.items);
+        if (!result.items.length) throw new Error("No matching artwork found in Cover Art Archive");
+      }
+    } catch (reason) { if (activeTrackId.current === requestedTrackId) onError(reason); } finally { if (activeTrackId.current === requestedTrackId) setArtworkBusy(false); }
+  };
+  const applyArtworkCandidate = async (candidate: ArtworkCandidate) => {
+    const requestedTrackId = track.id;
+    setArtworkBusy(true);
+    try {
+      const updated = await api<Track>(`/api/tracks/${track.id}/artwork/from-provider`, { method: "POST", body: JSON.stringify({ release_group_id: candidate.release_group_id }) });
+      if (activeTrackId.current !== requestedTrackId) return;
+      setArtworkCandidates([]);
+      await onUpdated(updated, `Artwork from ${candidate.release} embedded and backed up`);
+    } catch (reason) { if (activeTrackId.current === requestedTrackId) onError(reason); } finally { if (activeTrackId.current === requestedTrackId) setArtworkBusy(false); }
+  };
   const applyNamingTemplate = async () => {
     try {
       const result = await api<{ filename: string }>(`/api/tracks/${track.id}/name-preview`, { method: "POST", body: JSON.stringify({ template: namingTemplate }) });
@@ -303,11 +333,13 @@ function TrackEditor({ track, namingTemplate, onClose, onUpdated, onError }: { t
     <header className="editor-head"><span className="eyebrow">Track bench</span><button className="icon-button close-editor" onClick={onClose}><X /></button></header>
     <div className="track-identity">
       <label className={track.has_artwork ? "artwork" : "artwork missing"}>
-        {track.has_artwork ? <img src={`/api/tracks/${track.id}/artwork`} alt="Embedded cover" /> : <><Disc3 /><span>Add cover</span></>}
+        {track.has_artwork ? <img src={`/api/tracks/${track.id}/artwork?v=${track.mtime_ns}`} alt="Embedded cover" /> : <><Disc3 /><span>Add cover</span></>}
         <input type="file" accept="image/jpeg,image/png" onChange={(event) => uploadArtwork(event.target.files?.[0])} />
       </label>
       <div><h2>{track.tags.title || track.suggested.title || "Untitled"}</h2><p>{track.tags.artist || track.suggested.artist || "Unknown artist"}</p><small>{track.format.toUpperCase()} · {formatBytes(track.size)} · {Math.round(track.bitrate / 1000)} kbps</small></div>
     </div>
+    <button className="artwork-find" onClick={discoverArtwork} disabled={artworkBusy || !track.tags.artist || !track.tags.title}>{artworkBusy ? <LoaderCircle className="spin" /> : <Images />} Find release artwork <small>MusicBrainz + Cover Art Archive</small></button>
+    {artworkCandidates.length > 0 && <section className="artwork-candidates"><header><span className="eyebrow">Choose a release</span><button onClick={() => setArtworkCandidates([])} aria-label="Close artwork candidates"><X /></button></header><div>{artworkCandidates.map((candidate) => <button key={candidate.release_group_id} onClick={() => applyArtworkCandidate(candidate)} disabled={artworkBusy}><img src={`/api/tracks/${track.id}/artwork/candidates/${candidate.release_group_id}`} alt="" /><span><b>{candidate.release}</b><small>{candidate.artist}{candidate.date ? ` · ${candidate.date}` : ""} · {candidate.type}</small><em>{candidate.exact_album ? "Album match" : candidate.exact_track ? "Track match" : `${candidate.confidence}% match`}</em></span></button>)}</div><p>Verify the release before embedding. Community-provided covers may differ by edition.</p></section>}
     <audio controls preload="none" src={`/api/tracks/${track.id}/audio`} />
     {track.issues.length > 0 && <div className="issue-rack">{track.issues.map((item) => <span key={item}>{issueLabels[item] || item}</span>)}</div>}
     <div className="correction-label">

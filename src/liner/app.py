@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Annotated, Any
 from urllib.parse import urlparse
 
+import httpx
 from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
@@ -14,6 +15,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from . import __version__
 from .ai import AIService
+from .artwork import ArtworkService
 from .config import Settings
 from .db import Database
 from .media import TAG_FIELDS, MediaError, extract_artwork
@@ -32,6 +34,14 @@ class NamingPreview(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     template: str = Field(min_length=1, max_length=160)
+
+
+class ArtworkCandidateSelection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    release_group_id: str = Field(
+        pattern=r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    )
 
 
 class AIRequest(BaseModel):
@@ -160,6 +170,7 @@ def create_app(settings: Settings | None = None, *, allow_test_host: bool = Fals
     database.initialize()
     library = LibraryService(active_settings, database)
     ai = AIService(active_settings, database, library)
+    artwork_lookup = ArtworkService(library)
     metube = MeTubeService(active_settings, database, library)
     active_port = active_settings.port
 
@@ -183,6 +194,7 @@ def create_app(settings: Settings | None = None, *, allow_test_host: bool = Fals
     application.state.settings = active_settings
     application.state.database = database
     application.state.library = library
+    application.state.artwork_lookup = artwork_lookup
 
     @application.exception_handler(MediaError)
     async def media_error(_: Request, exc: MediaError) -> JSONResponse:
@@ -320,6 +332,38 @@ def create_app(settings: Settings | None = None, *, allow_test_host: bool = Fals
     ) -> dict[str, Any]:
         content = await artwork.read(10 * 1024 * 1024 + 1)
         return library.update_artwork(track_id, content, artwork.content_type or "")
+
+    @application.post("/api/tracks/{track_id}/artwork/discover")
+    async def discover_artwork(track_id: str) -> dict[str, Any]:
+        try:
+            return await artwork_lookup.apply_automatic(track_id)
+        except (httpx.HTTPError, RuntimeError) as exc:
+            raise HTTPException(
+                status_code=503, detail="Artwork providers are temporarily unavailable"
+            ) from exc
+
+    @application.get("/api/tracks/{track_id}/artwork/candidates/{release_group_id}")
+    async def artwork_candidate(track_id: str, release_group_id: str) -> Response:
+        try:
+            content, media_type = await artwork_lookup.preview(track_id, release_group_id)
+        except (httpx.HTTPError, RuntimeError) as exc:
+            raise HTTPException(
+                status_code=503, detail="Artwork provider is temporarily unavailable"
+            ) from exc
+        return Response(
+            content, media_type=media_type, headers={"Cache-Control": "private, max-age=900"}
+        )
+
+    @application.post("/api/tracks/{track_id}/artwork/from-provider")
+    async def apply_artwork_candidate(
+        track_id: str, body: ArtworkCandidateSelection
+    ) -> dict[str, Any]:
+        try:
+            return await artwork_lookup.apply(track_id, body.release_group_id)
+        except (httpx.HTTPError, RuntimeError) as exc:
+            raise HTTPException(
+                status_code=503, detail="Artwork provider is temporarily unavailable"
+            ) from exc
 
     @application.get("/api/tracks/{track_id}/artwork")
     async def artwork(track_id: str) -> Response:

@@ -14,6 +14,7 @@ export type Track = {
   filename: string;
   status: "active" | "quarantined";
   size: number;
+  mtime_ns: number;
   duration: number;
   bitrate: number;
   format: string;
@@ -85,4 +86,15 @@ export type AIPlan = {
     tags: Partial<Tags>;
     filename: string | null;
   }>;
+};
+
+export type ArtworkCandidate = {
+  release_group_id: string;
+  release: string;
+  artist: string;
+  date: string;
+  type: string;
+  confidence: number;
+  exact_track: boolean;
+  exact_album: boolean;
 };

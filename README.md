@@ -6,6 +6,11 @@ Spotify Local Files. It scans a configured folder, exposes the collection only a
 artwork replacement, audio preview, uploads, quarantine/restore, history, optional
 AI planning, and optional MeTube-sidecar ingestion.
 
+Artwork can be uploaded manually or discovered from MusicBrainz and the Cover Art
+Archive. Liner automatically embeds only a unique, exact metadata match; ambiguous
+release artwork is shown for review. Provider images are size-limited, validated,
+backed up, and served to the interface through Liner rather than loaded by the browser.
+
 ![Liner is designed as a cue sheet and track-repair bench rather than an album grid.](docs/interface.svg)
 
 ## Safety model
@@ -22,6 +27,8 @@ AI planning, and optional MeTube-sidecar ingestion.
   browse the filesystem, download files, or apply a plan without user confirmation.
 - Runtime data and credentials live outside Git under the current user's application
   data directory. Credentials are encrypted for the current Windows account with DPAPI.
+- Artwork discovery sends the saved artist, title, album, and duration to MusicBrainz.
+  Image downloads are restricted to Cover Art Archive and Internet Archive hosts.
 
 Liner does not modify a track during scanning. Spotify may treat changes to artist,
 album, title, or duration as a new local-track identity, so edits can invalidate
