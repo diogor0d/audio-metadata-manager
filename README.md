@@ -6,6 +6,10 @@ Spotify Local Files. It scans a configured folder, exposes the collection only a
 artwork replacement, audio preview, uploads, quarantine/restore, history, optional
 AI planning, and optional MeTube-sidecar ingestion.
 
+Tracks missing artist or title metadata offer a targeted MeTube replacement flow.
+Liner requests the best available audio, accepts the result only when it contains both
+core tags, preserves the track's database identity, and keeps the original for Undo.
+
 Artwork can be uploaded manually or discovered from MusicBrainz and the Cover Art
 Archive. Liner automatically embeds only a unique, exact metadata match; ambiguous
 release artwork is shown for review. Provider images are size-limited, validated,
@@ -21,6 +25,8 @@ backed up, and served to the interface through Liner rather than loaded by the b
 - Library operations reject path traversal and Windows reparse points.
 - Tag and artwork edits first create a backup, write and validate a temporary copy,
   then atomically replace the source file.
+- MeTube replacements are bound to the selected track and require artist and title
+  metadata before the staged download can replace the backed-up original.
 - Deletion first moves a file to Liner's private quarantine. Permanent deletion is
   available only from quarantine and requires browser confirmation.
 - AI can return schema-validated correction plans only. It cannot run commands,

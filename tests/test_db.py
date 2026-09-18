@@ -46,3 +46,44 @@ def test_migrates_legacy_global_path_uniqueness(tmp_path: Path) -> None:
             """
         )
     assert len(database.fetch_all("SELECT id FROM tracks WHERE relative_path='same.mp3'")) == 2
+
+
+def test_migrates_download_replacement_columns(tmp_path: Path) -> None:
+    path = tmp_path / "legacy-downloads.sqlite3"
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            """
+            CREATE TABLE downloads (
+                id TEXT PRIMARY KEY, remote_id TEXT NOT NULL, status TEXT NOT NULL,
+                poll_path TEXT NOT NULL, file_path TEXT, error TEXT,
+                created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+            )
+            """
+        )
+
+    database = Database(path)
+    database.initialize()
+
+    with database.connect() as connection:
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(downloads)")}
+    assert {"target_track_id", "purpose"}.issubset(columns)
+
+
+def test_recovers_interrupted_download_import(tmp_path: Path) -> None:
+    path = tmp_path / "interrupted.sqlite3"
+    database = Database(path)
+    database.initialize()
+    with database.transaction() as connection:
+        connection.execute(
+            """
+            INSERT INTO downloads (
+                id, remote_id, status, poll_path, created_at, updated_at
+            ) VALUES ('local', 'remote', 'importing', '/jobs/remote', 'now', 'now')
+            """
+        )
+
+    database.initialize()
+
+    assert database.fetch_one("SELECT status FROM downloads WHERE id='local'") == {
+        "status": "complete"
+    }

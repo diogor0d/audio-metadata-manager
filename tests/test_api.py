@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 from pathlib import Path
+from typing import Any, ClassVar, Self
 
+import httpx
 import pytest
 from conftest import make_audio
 from fastapi.testclient import TestClient
 
 from liner.config import Settings
 from liner.media import MediaError, safe_library_path
+from liner.metube import MeTubeService
 
 
 def first_track(client: TestClient) -> dict:
@@ -163,6 +167,273 @@ def test_upload_rejects_fake_audio(
     assert response.status_code == 400
     assert not (app_settings.library_root / "fake.mp3").exists()
     assert not list(app_settings.staging_dir.iterdir())
+
+
+def test_metube_replaces_missing_metadata_track_with_best_audio_and_undoes(
+    client: TestClient,
+    mutation_headers: dict[str, str],
+    app_settings: Settings,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = first_track(client)
+    missing_tags = {**original["tags"], "artist": ""}
+    repaired = client.patch(
+        f"/api/tracks/{original['id']}",
+        headers=mutation_headers,
+        json={"tags": missing_tags, "filename": original["filename"]},
+    ).json()
+    assert "missing_artist" in repaired["issues"]
+    downloaded = make_audio(
+        tmp_path / "download.m4a", title="Replacement Title", artist="Replacement Artist"
+    ).read_bytes()
+    remote_id = "11111111-1111-1111-1111-111111111111"
+
+    class FakeResponse:
+        def __init__(
+            self,
+            *,
+            payload: dict[str, Any] | None = None,
+            content: bytes = b"",
+            headers: dict[str, str] | None = None,
+        ) -> None:
+            self.payload = payload
+            self.content = content
+            self.headers = headers or {}
+            self.request = httpx.Request("GET", "https://metube.example.com")
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, Any]:
+            assert self.payload is not None
+            return self.payload
+
+        async def __aenter__(self) -> Self:
+            return self
+
+        async def __aexit__(self, *_: object) -> None:
+            return None
+
+        async def aiter_bytes(self, _: int):
+            yield self.content
+
+    class FakeAsyncClient:
+        submitted: ClassVar[dict[str, Any]] = {}
+
+        def __init__(self, **_: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> Self:
+            return self
+
+        async def __aexit__(self, *_: object) -> None:
+            return None
+
+        async def post(self, *_: Any, json: dict[str, Any], **__: Any) -> FakeResponse:
+            self.submitted = json
+            FakeAsyncClient.submitted = json
+            return FakeResponse(
+                payload={
+                    "id": remote_id,
+                    "status": "queued",
+                    "poll_url": f"/jobs/{remote_id}",
+                }
+            )
+
+        async def get(self, *_: Any, **__: Any) -> FakeResponse:
+            return FakeResponse(
+                payload={
+                    "id": remote_id,
+                    "status": "complete",
+                    "poll_url": f"/jobs/{remote_id}",
+                    "file_url": f"/jobs/{remote_id}/file",
+                    "error": None,
+                }
+            )
+
+        def stream(self, *_: Any, **__: Any) -> FakeResponse:
+            return FakeResponse(
+                content=downloaded,
+                headers={
+                    "content-length": str(len(downloaded)),
+                    "content-disposition": 'attachment; filename="Replacement.m4a"',
+                },
+            )
+
+    app_settings.metube_url = "https://metube.example.com"
+    monkeypatch.setattr("liner.metube.httpx.AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr(
+        "liner.metube.socket.getaddrinfo",
+        lambda *_: [(2, 1, 6, "", ("93.184.216.34", 443))],
+    )
+
+    created = client.post(
+        f"/api/tracks/{original['id']}/replacement-jobs",
+        headers=mutation_headers,
+        json={"url": "https://media.example.com/track"},
+    )
+    assert created.status_code == 202, created.text
+    job = created.json()
+    assert job["purpose"] == "replace"
+    assert job["target_track_id"] == original["id"]
+    assert FakeAsyncClient.submitted["download_type"] == "audio"
+    assert FakeAsyncClient.submitted["quality"] == "best"
+
+    imported = client.post(f"/api/metube/jobs/{job['id']}/import", headers=mutation_headers)
+    assert imported.status_code == 201, imported.text
+    replacement = imported.json()
+    assert replacement["id"] == original["id"]
+    assert replacement["filename"].endswith(".m4a")
+    assert replacement["tags"]["artist"] == "Replacement Artist"
+    assert not (app_settings.library_root / original["filename"]).exists()
+
+    operation = client.get("/api/history").json()["items"][0]
+    assert operation["kind"] == "replace"
+    undone = client.post(f"/api/history/{operation['id']}/undo", headers=mutation_headers)
+    assert undone.status_code == 200, undone.text
+    assert undone.json()["filename"] == original["filename"]
+    assert (app_settings.library_root / original["filename"]).is_file()
+
+
+def test_replacement_undo_refuses_to_overwrite_a_later_edit(
+    client: TestClient,
+    mutation_headers: dict[str, str],
+    app_settings: Settings,
+    tmp_path: Path,
+) -> None:
+    original = first_track(client)
+    missing_tags = {**original["tags"], "artist": ""}
+    client.patch(
+        f"/api/tracks/{original['id']}",
+        headers=mutation_headers,
+        json={"tags": missing_tags, "filename": original["filename"]},
+    )
+    replacement_file = make_audio(
+        tmp_path / "replacement.mp3", title="Replacement", artist="Artist"
+    )
+    with replacement_file.open("rb") as source:
+        replacement = client.app.state.library.replace_stream(
+            original["id"], source, replacement_file.name
+        )
+    replacement_operation = client.app.state.library.history()[0]
+    edited_tags = {**replacement["tags"], "genre": "Later edit"}
+    client.patch(
+        f"/api/tracks/{original['id']}",
+        headers=mutation_headers,
+        json={"tags": edited_tags, "filename": replacement["filename"]},
+    )
+
+    response = client.post(
+        f"/api/history/{replacement_operation['id']}/undo", headers=mutation_headers
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "A newer change must be undone first"
+    assert client.get(f"/api/tracks/{original['id']}").json()["tags"]["genre"] == "Later edit"
+
+
+def test_replacement_rejects_download_without_core_metadata(
+    client: TestClient,
+    mutation_headers: dict[str, str],
+    app_settings: Settings,
+    tmp_path: Path,
+) -> None:
+    original = first_track(client)
+    missing_tags = {**original["tags"], "artist": ""}
+    client.patch(
+        f"/api/tracks/{original['id']}",
+        headers=mutation_headers,
+        json={"tags": missing_tags, "filename": original["filename"]},
+    )
+    original_path = app_settings.library_root / original["filename"]
+    original_bytes = original_path.read_bytes()
+    untagged = make_audio(tmp_path / "untagged.mp3", title=None, artist=None)
+
+    with untagged.open("rb") as source, pytest.raises(MediaError, match="still lacks"):
+        client.app.state.library.replace_stream(original["id"], source, untagged.name)
+
+    assert original_path.read_bytes() == original_bytes
+    assert not any(item["kind"] == "replace" for item in client.app.state.library.history())
+
+
+def test_download_import_cannot_be_claimed_twice(
+    client: TestClient, mutation_headers: dict[str, str]
+) -> None:
+    with client.app.state.database.transaction() as connection:
+        connection.execute(
+            """
+            INSERT INTO downloads (
+                id, remote_id, status, poll_path, created_at, updated_at,
+                target_track_id, purpose
+            ) VALUES (
+                'local-job', 'remote-job', 'importing', '/jobs/remote-job',
+                'now', 'now', NULL, 'add'
+            )
+            """
+        )
+
+    response = client.post("/api/metube/jobs/local-job/import", headers=mutation_headers)
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Download is already being imported"
+
+
+def test_delayed_refresh_does_not_release_an_import_claim(
+    client: TestClient,
+    app_settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    remote_id = "22222222-2222-2222-2222-222222222222"
+    with client.app.state.database.transaction() as connection:
+        connection.execute(
+            """
+            INSERT INTO downloads (
+                id, remote_id, status, poll_path, created_at, updated_at,
+                target_track_id, purpose
+            ) VALUES (
+                'race-job', ?, 'complete', ?, 'now', 'now', NULL, 'add'
+            )
+            """,
+            (remote_id, f"/jobs/{remote_id}"),
+        )
+
+    class RaceResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, Any]:
+            with client.app.state.database.transaction() as connection:
+                connection.execute(
+                    "UPDATE downloads SET status='importing' WHERE id='race-job'"
+                )
+            return {
+                "id": remote_id,
+                "status": "complete",
+                "file_url": f"/jobs/{remote_id}/file",
+                "error": None,
+            }
+
+    class RaceClient:
+        def __init__(self, **_: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> Self:
+            return self
+
+        async def __aexit__(self, *_: object) -> None:
+            return None
+
+        async def get(self, *_: Any, **__: Any) -> RaceResponse:
+            return RaceResponse()
+
+    app_settings.metube_url = "https://metube.example.com"
+    monkeypatch.setattr("liner.metube.httpx.AsyncClient", RaceClient)
+    service = MeTubeService(app_settings, client.app.state.database, client.app.state.library)
+
+    refreshed = asyncio.run(service.refresh("race-job"))
+
+    assert refreshed["status"] == "importing"
 
 
 def test_path_boundary_rejects_windows_escape_forms(app_settings: Settings) -> None:

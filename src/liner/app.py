@@ -19,7 +19,7 @@ from .artwork import ArtworkService
 from .config import Settings
 from .db import Database
 from .media import TAG_FIELDS, MediaError, extract_artwork
-from .metube import MeTubeService
+from .metube import MeTubeProtocolError, MeTubeService
 from .service import LibraryService
 
 
@@ -424,16 +424,43 @@ def create_app(settings: Settings | None = None, *, allow_test_host: bool = Fals
     async def create_download(body: DownloadRequest) -> dict[str, Any]:
         try:
             return await metube.create(body.url)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except (httpx.HTTPError, MeTubeProtocolError) as exc:
+            raise HTTPException(status_code=502, detail="MeTube is unavailable") from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    @application.post("/api/tracks/{track_id}/replacement-jobs", status_code=202)
+    async def create_replacement_download(
+        track_id: str, body: DownloadRequest
+    ) -> dict[str, Any]:
+        try:
+            return await metube.create(body.url, target_track_id=track_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except (httpx.HTTPError, MeTubeProtocolError) as exc:
+            raise HTTPException(status_code=502, detail="MeTube is unavailable") from exc
         except RuntimeError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     @application.get("/api/metube/jobs/{job_id}")
     async def get_download(job_id: str) -> dict[str, Any]:
-        return await metube.refresh(job_id)
+        try:
+            return await metube.refresh(job_id)
+        except (httpx.HTTPError, MeTubeProtocolError) as exc:
+            raise HTTPException(status_code=502, detail="MeTube is unavailable") from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     @application.post("/api/metube/jobs/{job_id}/import", status_code=201)
     async def import_download(job_id: str) -> dict[str, Any]:
-        return await metube.import_completed(job_id)
+        try:
+            return await metube.import_completed(job_id)
+        except (httpx.HTTPError, MeTubeProtocolError) as exc:
+            raise HTTPException(status_code=502, detail="MeTube is unavailable") from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     static_dir = Path(__file__).with_name("static")
     index_path = static_dir / "index.html"

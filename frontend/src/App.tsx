@@ -23,7 +23,7 @@ import {
   X,
 } from "lucide-react";
 import { api, formatBytes, formatDuration, setRequestToken } from "./api";
-import type { AIPlan, AppSettings, ArtworkCandidate, Bootstrap, HistoryItem, Stats, Tags, Track } from "./types";
+import type { AIPlan, AppSettings, ArtworkCandidate, Bootstrap, DownloadJob, HistoryItem, Stats, Tags, Track } from "./types";
 
 type View = "library" | "add" | "assistant" | "history" | "quarantine" | "settings";
 
@@ -143,7 +143,7 @@ function App() {
     <div className="app-shell">
       <aside className="side-rail">
         <button className="wordmark" onClick={() => selectView("library")}>
-          <span className="wordmark-mark"><Disc3 /></span>
+          <span className="wordmark-mark"><img src="/liner-mark.svg" alt="" /></span>
           <span>LINER</span>
         </button>
         <div className="library-stamp">
@@ -187,6 +187,7 @@ function App() {
             }}
             onError={showError}
             namingTemplate={bootstrap.naming_template}
+            metubeEnabled={bootstrap.capabilities.metube}
           />
         )}
         {view === "add" && <AddView capabilities={bootstrap.capabilities} onAdded={async () => { await loadTracks("active"); setNotice("Added to the library inbox"); }} onError={showError} />}
@@ -226,7 +227,7 @@ type LibraryProps = {
   tracks: Track[]; stats: Stats; selected: Track | null; checked: Set<string>; query: string; issue: string; busy: boolean;
   onQuery: (value: string) => void; onIssue: (value: string) => void; onScan: () => void; onSelect: (track: Track | null) => void;
   onCheck: (id: string) => void; onUpdated: (track: Track, message: string) => Promise<void>; onError: (error: unknown) => void;
-  namingTemplate: string;
+  namingTemplate: string; metubeEnabled: boolean;
 };
 
 function LibraryView(props: LibraryProps) {
@@ -255,7 +256,7 @@ function LibraryView(props: LibraryProps) {
       </div>
     </section>
     <section className={props.selected ? "editor-pane open" : "editor-pane"}>
-      {props.selected ? <TrackEditor track={props.selected} namingTemplate={props.namingTemplate} onClose={() => props.onSelect(null)} onUpdated={props.onUpdated} onError={props.onError} /> : <div className="bench-empty"><div className="record-grooves"><Disc3 /></div><span>Track bench</span><p>Select a cut to inspect its label, hear it, and prepare corrections.</p></div>}
+      {props.selected ? <TrackEditor track={props.selected} namingTemplate={props.namingTemplate} metubeEnabled={props.metubeEnabled} onClose={() => props.onSelect(null)} onUpdated={props.onUpdated} onError={props.onError} /> : <div className="bench-empty"><div className="record-grooves"><Disc3 /></div><span>Track bench</span><p>Select a cut to inspect its label, hear it, and prepare corrections.</p></div>}
     </section>
   </div>;
 }
@@ -269,16 +270,19 @@ function TrackRow({ track, active, checked, onCheck, onClick }: { track: Track; 
   </button>;
 }
 
-function TrackEditor({ track, namingTemplate, onClose, onUpdated, onError }: { track: Track; namingTemplate: string; onClose: () => void; onUpdated: (track: Track, message: string) => Promise<void>; onError: (error: unknown) => void }) {
+function TrackEditor({ track, namingTemplate, metubeEnabled, onClose, onUpdated, onError }: { track: Track; namingTemplate: string; metubeEnabled: boolean; onClose: () => void; onUpdated: (track: Track, message: string) => Promise<void>; onError: (error: unknown) => void }) {
   const [tags, setTags] = useState<Tags>(track.tags);
   const [filename, setFilename] = useState(track.filename);
   const [saving, setSaving] = useState(false);
   const [artworkBusy, setArtworkBusy] = useState(false);
   const [artworkCandidates, setArtworkCandidates] = useState<ArtworkCandidate[]>([]);
+  const [replacementUrl, setReplacementUrl] = useState("");
+  const [replacementJob, setReplacementJob] = useState<DownloadJob | null>(null);
+  const [replacementBusy, setReplacementBusy] = useState(false);
   const activeTrackId = useRef(track.id);
   activeTrackId.current = track.id;
 
-  useEffect(() => { setTags(track.tags); setFilename(track.filename); setArtworkCandidates([]); setArtworkBusy(false); }, [track.id, track.filename, track.tags]);
+  useEffect(() => { setTags(track.tags); setFilename(track.filename); setArtworkCandidates([]); setArtworkBusy(false); setReplacementUrl(""); setReplacementJob(null); setReplacementBusy(false); }, [track.id, track.filename, track.tags]);
   const dirty = JSON.stringify(tags) !== JSON.stringify(track.tags) || filename !== track.filename;
 
   const save = async () => {
@@ -328,6 +332,36 @@ function TrackEditor({ track, namingTemplate, onClose, onUpdated, onError }: { t
       setFilename(result.filename);
     } catch (reason) { onError(reason); }
   };
+  const replaceFromLink = async (event: FormEvent) => {
+    event.preventDefault();
+    const requestedTrackId = track.id;
+    setReplacementBusy(true);
+    try {
+      let job = await api<DownloadJob>(`/api/tracks/${track.id}/replacement-jobs`, { method: "POST", body: JSON.stringify({ url: replacementUrl }) });
+      setReplacementJob(job);
+      let pollCount = 0;
+      while (!["complete", "failed"].includes(job.status)) {
+        if (!["queued", "downloading"].includes(job.status)) throw new Error(`MeTube returned an unknown job state: ${job.status}`);
+        if (pollCount++ >= 400) throw new Error("MeTube did not finish the download within 10 minutes");
+        await new Promise((resolve) => window.setTimeout(resolve, 1500));
+        job = await api<DownloadJob>(`/api/metube/jobs/${job.id}`);
+        if (activeTrackId.current === requestedTrackId) setReplacementJob(job);
+      }
+      if (job.status === "failed") throw new Error(job.error || "MeTube could not download this source");
+      if (activeTrackId.current === requestedTrackId) setReplacementJob({ ...job, status: "replacing" });
+      const updated = await api<Track>(`/api/metube/jobs/${job.id}/import`, { method: "POST" });
+      if (activeTrackId.current === requestedTrackId) {
+        setReplacementJob(null);
+        setReplacementUrl("");
+        await onUpdated(updated, "Downloaded audio replaced the track; the original is available in History");
+      }
+    } catch (reason) {
+      if (activeTrackId.current === requestedTrackId) onError(reason);
+    } finally {
+      if (activeTrackId.current === requestedTrackId) setReplacementBusy(false);
+    }
+  };
+  const needsMetadataReplacement = track.issues.some((item) => item === "missing_artist" || item === "missing_title");
 
   return <div className="editor-card">
     <header className="editor-head"><span className="eyebrow">Track bench</span><button className="icon-button close-editor" onClick={onClose}><X /></button></header>
@@ -342,6 +376,7 @@ function TrackEditor({ track, namingTemplate, onClose, onUpdated, onError }: { t
     {artworkCandidates.length > 0 && <section className="artwork-candidates"><header><span className="eyebrow">Choose a release</span><button onClick={() => setArtworkCandidates([])} aria-label="Close artwork candidates"><X /></button></header><div>{artworkCandidates.map((candidate) => <button key={candidate.release_group_id} onClick={() => applyArtworkCandidate(candidate)} disabled={artworkBusy}><img src={`/api/tracks/${track.id}/artwork/candidates/${candidate.release_group_id}`} alt="" /><span><b>{candidate.release}</b><small>{candidate.artist}{candidate.date ? ` · ${candidate.date}` : ""} · {candidate.type}</small><em>{candidate.exact_album ? "Album match" : candidate.exact_track ? "Track match" : `${candidate.confidence}% match`}</em></span></button>)}</div><p>Verify the release before embedding. Community-provided covers may differ by edition.</p></section>}
     <audio controls preload="none" src={`/api/tracks/${track.id}/audio`} />
     {track.issues.length > 0 && <div className="issue-rack">{track.issues.map((item) => <span key={item}>{issueLabels[item] || item}</span>)}</div>}
+    {needsMetadataReplacement && <form className="replacement-card" onSubmit={replaceFromLink}><span className="eyebrow">Replace from source</span><h3>Find a better-labelled copy</h3><p>Paste a link to the matching track. MeTube downloads its best available audio, and Liner replaces this file only after confirming artist and title metadata. The original stays available for Undo, and the job continues if you close this panel.</p>{metubeEnabled ? <><input type="url" value={replacementUrl} onChange={(event) => setReplacementUrl(event.target.value)} placeholder="https://…" required disabled={replacementBusy} /><button className="primary" disabled={replacementBusy}>{replacementBusy ? <LoaderCircle className="spin" /> : <Disc3 />} {replacementBusy ? "Preparing replacement" : "Download best audio and replace"}</button>{replacementJob && <div className="replacement-status" role="status"><span className="status-dot" /> {replacementJob.status}</div>}</> : <div className="not-configured">Configure the MeTube connection in Settings to replace this track from a link.</div>}</form>}
     <div className="correction-label">
       <span>Current file</span><code>{track.filename}</code>
       <i>correction strip</i>
@@ -355,10 +390,10 @@ function TrackEditor({ track, namingTemplate, onClose, onUpdated, onError }: { t
 }
 
 function AddView({ capabilities, onAdded, onError }: { capabilities: Bootstrap["capabilities"]; onAdded: () => Promise<void>; onError: (error: unknown) => void }) {
-  const [file, setFile] = useState<File | null>(null); const [url, setUrl] = useState(""); const [busy, setBusy] = useState(false); const [job, setJob] = useState<{ id: string; status: string } | null>(null);
+  const [file, setFile] = useState<File | null>(null); const [url, setUrl] = useState(""); const [busy, setBusy] = useState(false); const [job, setJob] = useState<DownloadJob | null>(null);
   const upload = async (event: FormEvent) => { event.preventDefault(); if (!file) return; setBusy(true); const form = new FormData(); form.append("audio_file", file); try { await api("/api/uploads", { method: "POST", body: form }); setFile(null); await onAdded(); } catch (reason) { onError(reason); } finally { setBusy(false); } };
-  const download = async (event: FormEvent) => { event.preventDefault(); setBusy(true); try { const created = await api<{ id: string; status: string }>("/api/metube/jobs", { method: "POST", body: JSON.stringify({ url }) }); setJob(created); } catch (reason) { onError(reason); } finally { setBusy(false); } };
-  const checkJob = async () => { if (!job) return; try { const current = await api<{ id: string; status: string }>(`/api/metube/jobs/${job.id}`); setJob(current); } catch (reason) { onError(reason); } };
+  const download = async (event: FormEvent) => { event.preventDefault(); setBusy(true); try { const created = await api<DownloadJob>("/api/metube/jobs", { method: "POST", body: JSON.stringify({ url }) }); setJob(created); } catch (reason) { onError(reason); } finally { setBusy(false); } };
+  const checkJob = async () => { if (!job) return; try { const current = await api<DownloadJob>(`/api/metube/jobs/${job.id}`); setJob(current); } catch (reason) { onError(reason); } };
   const importJob = async () => { if (!job) return; setBusy(true); try { await api(`/api/metube/jobs/${job.id}/import`, { method: "POST" }); setJob(null); setUrl(""); await onAdded(); } catch (reason) { onError(reason); } finally { setBusy(false); } };
   return <Page title="Bring in a new cut" eyebrow="Ingest desk" intro="Files are validated in staging before Spotify can see them.">
     <div className="intake-grid">
@@ -381,10 +416,10 @@ function AssistantView({ enabled, tracks, checked, selected, onApplied, onError 
 function HistoryView({ onChanged, onError }: { onChanged: () => Promise<void>; onError: (error: unknown) => void }) {
   const [items, setItems] = useState<HistoryItem[]>([]); const load = () => api<{ items: HistoryItem[] }>("/api/history").then((data) => setItems(data.items)).catch(onError); useEffect(() => { void load(); }, []);
   const undo = async (id: string) => { try { await api(`/api/history/${id}/undo`, { method: "POST" }); await onChanged(); load(); } catch (reason) { onError(reason); } };
-  return <Page title="Every cut leaves a trail" eyebrow="Change log" intro="Tag edits keep an original backup. Quarantines can be restored from here or from the bin."><div className="history-list">{items.map((item) => <article key={item.id}><span className={`operation-mark ${item.kind}`}><Clock3 /></span><div><b>{item.kind}</b><p>{describeOperation(item)}</p><small>{new Date(item.created_at).toLocaleString()}</small></div>{item.status === "applied" && ["edit", "artwork", "quarantine"].includes(item.kind) && <button className="secondary compact" onClick={() => undo(item.id)}>Undo</button>}</article>)}{!items.length && <div className="empty"><History /><h2>No changes yet</h2></div>}</div></Page>;
+  return <Page title="Every cut leaves a trail" eyebrow="Change log" intro="Tag edits keep an original backup. Quarantines can be restored from here or from the bin."><div className="history-list">{items.map((item) => <article key={item.id}><span className={`operation-mark ${item.kind}`}><Clock3 /></span><div><b>{item.kind}</b><p>{describeOperation(item)}</p><small>{new Date(item.created_at).toLocaleString()}</small></div>{item.status === "applied" && ["edit", "artwork", "replace", "quarantine"].includes(item.kind) && <button className="secondary compact" onClick={() => undo(item.id)}>Undo</button>}</article>)}{!items.length && <div className="empty"><History /><h2>No changes yet</h2></div>}</div></Page>;
 }
 
-function describeOperation(item: HistoryItem) { const before = item.before.relative_path as string | undefined; const after = item.after.relative_path as string | undefined; if (item.kind === "edit" && before !== after) return `${before} → ${after}`; if (item.kind === "quarantine") return `Removed ${before} from the active library`; if (item.kind === "add") return `Added ${after}`; return before || after || "Library operation"; }
+function describeOperation(item: HistoryItem) { const before = item.before.relative_path as string | undefined; const after = item.after.relative_path as string | undefined; if (["edit", "replace"].includes(item.kind) && before !== after) return `${before} → ${after}`; if (item.kind === "replace") return `Replaced audio for ${after}`; if (item.kind === "quarantine") return `Removed ${before} from the active library`; if (item.kind === "add") return `Added ${after}`; return before || after || "Library operation"; }
 
 function QuarantineView({ tracks, onChanged, onError }: { tracks: Track[]; onChanged: (message: string) => Promise<void>; onError: (error: unknown) => void }) {
   const restore = async (track: Track) => { try { await api(`/api/tracks/${track.id}/restore`, { method: "POST" }); await onChanged("Restored to the library"); } catch (reason) { onError(reason); } };

@@ -38,7 +38,7 @@ if ($Listening) {
     } catch {
         throw "Port $Port is occupied by another application."
     }
-    if ($ExistingHealth.status -ne "ok" -or $ExistingHealth.version -ne "1.2.0") {
+    if ($ExistingHealth.status -ne "ok" -or $ExistingHealth.version -ne "1.3.0") {
         throw "Port $Port is occupied by another application."
     }
     New-Item -ItemType Directory -Path $DataDirectory -Force | Out-Null

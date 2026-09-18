@@ -60,7 +60,9 @@ CREATE TABLE IF NOT EXISTS downloads (
     file_path TEXT,
     error TEXT,
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    target_track_id TEXT,
+    purpose TEXT NOT NULL DEFAULT 'add'
 );
 """
 
@@ -83,6 +85,18 @@ class Database:
             ).fetchone()
             if table and "RELATIVE_PATH TEXT NOT NULL UNIQUE" in table["sql"].upper():
                 self._migrate_track_path_uniqueness(connection)
+            download_columns = {
+                row["name"] for row in connection.execute("PRAGMA table_info(downloads)")
+            }
+            if "target_track_id" not in download_columns:
+                connection.execute("ALTER TABLE downloads ADD COLUMN target_track_id TEXT")
+            if "purpose" not in download_columns:
+                connection.execute(
+                    "ALTER TABLE downloads ADD COLUMN purpose TEXT NOT NULL DEFAULT 'add'"
+                )
+            connection.execute(
+                "UPDATE downloads SET status='complete' WHERE status='importing'"
+            )
 
     @staticmethod
     def _migrate_track_path_uniqueness(connection: sqlite3.Connection) -> None:

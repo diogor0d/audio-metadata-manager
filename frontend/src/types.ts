@@ -98,3 +98,11 @@ export type ArtworkCandidate = {
   exact_track: boolean;
   exact_album: boolean;
 };
+
+export type DownloadJob = {
+  id: string;
+  status: string;
+  error: string | null;
+  purpose: "add" | "replace";
+  target_track_id: string | null;
+};

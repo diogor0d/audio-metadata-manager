@@ -11,27 +11,33 @@ from liner.app import create_app
 from liner.config import Settings
 
 
-def make_audio(path: Path, *, duration: float = 0.2) -> Path:
+def make_audio(
+    path: Path,
+    *,
+    duration: float = 0.2,
+    title: str | None = "Synthetic Tone",
+    artist: str | None = "Liner Tests",
+) -> Path:
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
         pytest.skip("ffmpeg is required for synthetic audio fixtures")
+    command = [
+        ffmpeg,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        f"sine=frequency=440:duration={duration}",
+    ]
+    if title is not None:
+        command.extend(["-metadata", f"title={title}"])
+    if artist is not None:
+        command.extend(["-metadata", f"artist={artist}"])
+    command.extend(["-y", str(path)])
     subprocess.run(
-        [
-            ffmpeg,
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-f",
-            "lavfi",
-            "-i",
-            f"sine=frequency=440:duration={duration}",
-            "-metadata",
-            "title=Synthetic Tone",
-            "-metadata",
-            "artist=Liner Tests",
-            "-y",
-            str(path),
-        ],
+        command,
         check=True,
         timeout=20,
     )

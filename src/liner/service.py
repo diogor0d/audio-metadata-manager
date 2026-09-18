@@ -516,6 +516,92 @@ class LibraryService:
             staging.unlink(missing_ok=True)
             raise
 
+    def replace_stream(
+        self, track_id: str, stream: BinaryIO, original_name: str
+    ) -> dict[str, Any]:
+        extension = Path(original_name).suffix.lower()
+        if extension not in SUPPORTED_EXTENSIONS:
+            raise MediaError("Downloaded replacement uses an unsupported audio extension")
+        operation_id = str(uuid4())
+        staging = self.settings.staging_dir / f"replacement-{operation_id}{extension}"
+        total = 0
+        try:
+            with staging.open("wb") as output:
+                while chunk := stream.read(1024 * 1024):
+                    total += len(chunk)
+                    if total > self.settings.max_upload_bytes:
+                        raise MediaError("Replacement exceeds the configured size limit")
+                    output.write(chunk)
+            replacement_details = inspect_media(staging)
+            if (
+                not replacement_details["tags"]["artist"]
+                or not replacement_details["tags"]["title"]
+            ):
+                raise MediaError(
+                    "The downloaded file still lacks artist or title metadata; try another source"
+                )
+
+            with self._mutation_lock:
+                track, source = self.resolve_active(track_id)
+                if not ({"missing_artist", "missing_title"} & set(track["issues"])):
+                    raise MediaError(
+                        "Track metadata was already repaired; replacement cancelled"
+                    )
+                destination = source.with_suffix(extension)
+                if destination != source and destination.exists():
+                    raise FileExistsError("A file already occupies the replacement path")
+                backup = self.settings.backup_dir / f"{operation_id}{source.suffix.lower()}"
+                temporary = source.with_name(
+                    f".{source.stem}.{operation_id}.liner-replacement{extension}"
+                )
+                holder = source.with_name(f".{source.name}.{operation_id}.liner-old")
+                try:
+                    shutil.copy2(source, backup)
+                    shutil.copy2(staging, temporary)
+                except Exception:
+                    temporary.unlink(missing_ok=True)
+                    backup.unlink(missing_ok=True)
+                    raise
+                before = {
+                    "relative_path": track["relative_path"],
+                    "tags": track["tags"],
+                    "has_artwork": track["has_artwork"],
+                }
+                try:
+                    if destination != source:
+                        os.replace(source, holder)
+                    os.replace(temporary, destination)
+                    details = inspect_media(destination)
+                    relative = destination.relative_to(self.settings.library_root).as_posix()
+                    after = {
+                        "relative_path": relative,
+                        "tags": details["tags"],
+                        "has_artwork": details["has_artwork"],
+                    }
+                    holder.unlink(missing_ok=True)
+                    self._record_update(
+                        track_id,
+                        relative,
+                        details,
+                        operation_id,
+                        "replace",
+                        before,
+                        after,
+                        backup,
+                    )
+                except Exception:
+                    temporary.unlink(missing_ok=True)
+                    destination.unlink(missing_ok=True)
+                    if holder.is_file():
+                        os.replace(holder, source)
+                    else:
+                        shutil.copy2(backup, source)
+                    backup.unlink(missing_ok=True)
+                    raise
+                return self.get_track(track_id)
+        finally:
+            staging.unlink(missing_ok=True)
+
     def history(self, limit: int = 100) -> list[dict[str, Any]]:
         rows = self.database.fetch_all(
             "SELECT id, kind, status, track_id, before_json, after_json, created_at, reversed_at "
@@ -536,8 +622,27 @@ class LibraryService:
                 raise MediaError("Operation cannot be undone")
             if operation["kind"] == "quarantine":
                 result = self.restore(operation["track_id"])
-            elif operation["kind"] in {"edit", "artwork"}:
+            elif operation["kind"] in {"edit", "artwork", "replace"}:
                 track = self.get_track(operation["track_id"])
+                newer = self.database.fetch_one(
+                    """
+                    SELECT id FROM operations
+                    WHERE track_id=? AND status='applied' AND kind!='undo' AND created_at>?
+                    LIMIT 1
+                    """,
+                    (operation["track_id"], operation["created_at"]),
+                )
+                after = json.loads(operation["after_json"])
+                if (
+                    newer
+                    or (
+                        "relative_path" in after
+                        and after["relative_path"] != track["relative_path"]
+                    )
+                    or ("tags" in after and after["tags"] != track["tags"])
+                    or ("has_artwork" in after and after["has_artwork"] != track["has_artwork"])
+                ):
+                    raise MediaError("A newer change must be undone first")
                 current = safe_library_path(self.settings.library_root, track["relative_path"])
                 before = json.loads(operation["before_json"])
                 destination = safe_library_path(

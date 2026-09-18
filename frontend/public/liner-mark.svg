@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">Liner</title>
+  <circle cx="32" cy="32" r="29" fill="#17282f"/>
+  <circle cx="32" cy="32" r="19" fill="none" stroke="#f8faf9" stroke-opacity=".18" stroke-width="2"/>
+  <circle cx="32" cy="32" r="10" fill="#e7eef1"/>
+  <path d="M11 40 53 24v10L11 50Z" fill="#c94732"/>
+  <circle cx="32" cy="32" r="3" fill="#17282f"/>
+</svg>

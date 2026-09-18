@@ -39,8 +39,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   background: #d8e3e7; border-right: 1px solid rgba(23, 40, 47, .12); z-index: 20;
 }
 .wordmark { display: flex; align-items: center; gap: 12px; border: 0; background: none; padding: 0 7px; font-family: "Anybody", sans-serif; font-weight: 800; font-size: 25px; letter-spacing: .14em; }
-.wordmark-mark { width: 34px; height: 34px; display: grid; place-items: center; color: var(--poly); background: var(--ink); border-radius: 50%; }
-.wordmark-mark svg { width: 20px; }
+.wordmark-mark { width: 36px; height: 36px; display: grid; place-items: center; flex: 0 0 auto; }
+.wordmark-mark img { width: 100%; height: 100%; display: block; }
 .library-stamp { margin: 34px 7px 25px; padding: 14px 0; border-block: 1px solid var(--hairline); display: grid; gap: 3px; }
 .library-stamp span, .eyebrow, .card-index { font: 400 10px/1.4 "Martian Mono", monospace; letter-spacing: .14em; text-transform: uppercase; color: var(--deck); }
 .library-stamp strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
@@ -135,6 +135,12 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .artwork-candidates > p { margin: 9px 2px 0; color: var(--muted); font-size: 10px; line-height: 1.4; }
 .issue-rack { display: flex; flex-wrap: wrap; gap: 5px; margin: 0 0 15px; }
 .issue-rack span { padding: 4px 7px; color: #8e3022; background: rgba(201,71,50,.1); border-radius: 3px; font: 400 8px "Martian Mono", monospace; text-transform: uppercase; }
+.replacement-card { margin: 0 0 18px; padding: 15px; display: grid; gap: 10px; border: 1px solid rgba(201,71,50,.34); background: #fff5f1; }
+.replacement-card h3 { margin: 0; font: 700 19px "Anybody", sans-serif; }
+.replacement-card p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.replacement-card input { width: 100%; min-width: 0; padding: 10px 11px; border: 1px solid var(--hairline); border-radius: 5px; background: #fff; }
+.replacement-card .primary { width: 100%; }
+.replacement-status { display: flex; align-items: center; gap: 8px; color: var(--deck); font: 400 9px "Martian Mono", monospace; text-transform: uppercase; }
 .correction-label { position: relative; display: grid; gap: 6px; margin: 17px 0 20px; padding: 14px; color: var(--poly); background: var(--ink); overflow: hidden; }
 .correction-label span { color: #afbdc2; font: 400 8px "Martian Mono", monospace; text-transform: uppercase; }
 .correction-label code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 400 10px "Martian Mono", monospace; text-decoration: line-through; text-decoration-color: var(--correction); }
